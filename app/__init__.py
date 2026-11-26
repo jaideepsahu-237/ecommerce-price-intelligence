@@ -12,6 +12,13 @@ def create_app():
     # Import models here (not at the top) to avoid circular imports.
     from app import models  # noqa: F401
 
+    # Register Blueprints
+    from app.routes.search import search_bp
+    from app.routes.health import health_bp
+
+    app.register_blueprint(search_bp)
+    app.register_blueprint(health_bp)
+
     @app.route("/")
     def home():
         return "Ecommerce Price Intelligence API is running!"
