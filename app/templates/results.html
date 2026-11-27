@@ -49,6 +49,11 @@
                     {% if variant.colour %}
                     <span class="badge bg-light text-dark border">{{ variant.colour }}</span>
                     {% endif %}
+                    <button type="button"
+                            class="btn btn-outline-secondary btn-sm ms-2 py-0 px-2"
+                            onclick="loadPriceHistory({{ variant.product_id }}, '{{ (variant.brand ~ ' ' ~ variant.model)|e }}')">
+                        📈 Price History
+                    </button>
                 </div>
                 {% if variant.best_deal and variant.best_deal.selling_price > 0 %}
                 <div class="text-end">
@@ -149,6 +154,73 @@
     </div>
     {% endfor %}
 </div>
+
+<!-- Price History Modal -->
+<div class="modal fade" id="priceHistoryModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="priceHistoryTitle">Price History</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="priceHistoryBody">
+                <p class="text-muted mb-0">Loading price history...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+async function loadPriceHistory(productId, title) {
+    const modalEl = document.getElementById('priceHistoryModal');
+    const titleEl = document.getElementById('priceHistoryTitle');
+    const bodyEl = document.getElementById('priceHistoryBody');
+
+    titleEl.textContent = `Price History — ${title}`;
+    bodyEl.innerHTML = '<p class="text-muted mb-0">Loading price history...</p>';
+    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+
+    try {
+        const resp = await fetch(`/api/price-history/${productId}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        const rows = data.history || [];
+        if (!rows.length) {
+            bodyEl.innerHTML = '<p class="text-muted mb-0">No historical price snapshots recorded yet for this variant.</p>';
+            return;
+        }
+        const tableRows = rows.map(r => `
+            <tr>
+                <td class="small">${(r.recorded_at || '').slice(0, 19).replace('T', ' ')} UTC</td>
+                <td class="fw-semibold">${r.retailer || '-'}</td>
+                <td class="fw-bold text-success">₹${Number(r.selling_price || 0).toLocaleString('en-IN', {minimumFractionDigits: 2})}</td>
+                <td class="small text-muted">${r.mrp ? '₹' + Number(r.mrp).toLocaleString('en-IN', {minimumFractionDigits: 2}) : '-'}</td>
+                <td class="small">${r.offer_text || '-'}</td>
+            </tr>
+        `).join('');
+        bodyEl.innerHTML = `
+            <p class="text-muted small mb-2">${data.total_records} recorded snapshot(s)</p>
+            <div class="table-responsive">
+                <table class="table table-sm table-striped align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Recorded At</th>
+                            <th>Retailer</th>
+                            <th>Selling Price</th>
+                            <th>MRP</th>
+                            <th>Offer</th>
+                        </tr>
+                    </thead>
+                    <tbody>${tableRows}</tbody>
+                </table>
+            </div>
+        `;
+    } catch (err) {
+        bodyEl.innerHTML = `<div class="alert alert-danger mb-0">Failed to load price history: ${err.message}</div>`;
+    }
+}
+</script>
 
 </body>
 </html>
