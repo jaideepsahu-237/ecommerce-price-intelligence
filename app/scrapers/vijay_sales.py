@@ -26,6 +26,7 @@ class VijaySalesScraper(BaseScraper):
     name = "vijay-sales"
     base_url = Config.VIJAY_SALES_BASE_URL
     category_url = Config.VIJAY_SALES_CATEGORY_URL
+    search_api_url = "https://mdm.vijaysales.com/web/api/search/unbxd-search/v1"
     request_interval = 2.0
 
     def __init__(
@@ -37,42 +38,107 @@ class VijaySalesScraper(BaseScraper):
         self.category_url = category_url or Config.VIJAY_SALES_CATEGORY_URL
 
     def search(self, query: str, **filters) -> list[ScrapedListing]:
-        """Search Vijay Sales for products matching query.
-
-        Tries the category page first (e.g. /c/iphones), extracting items
-        from Schema.org ItemList or DOM cards, then filters by query.
-        """
+        """Search Vijay Sales via its Unbxd JSON search API, with HTML fallback."""
         crawl_id = self._make_crawl_id()
         logger.info("%s: searching for '%s'", self.name, query)
 
-        # 1. Fetch from category URL (configured via .env)
+        listings = self._search_via_api(query, crawl_id)
+        if not listings:
+            listings = self._search_via_html(query, crawl_id)
+
+        if query and listings:
+            q_terms = re.sub(r"[^\w\s]", "", query.lower()).split()
+            listings = [
+                l for l in listings
+                if all(term in re.sub(r"[^\w\s]", "", l.product_name.lower()) for term in q_terms)
+            ]
+
+        logger.info("%s: returning %d listings for '%s'", self.name, len(listings), query)
+        return listings
+
+    def _search_via_api(self, query: str, crawl_id: str) -> list[ScrapedListing]:
+        """Query Vijay Sales's Unbxd JSON search endpoint directly."""
+        params = {
+            "q": f"{query}&page=1&rows=30",
+            "fq": "",
+        }
         try:
-            resp = self._get(self.category_url)
+            resp = self._get(self.search_api_url, params=params)
+            data = resp.json()
         except Exception as exc:
-            logger.warning("%s: category request failed: %s", self.name, exc)
+            logger.warning("%s: Unbxd API request failed: %s", self.name, exc)
             return []
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        # Extract items from ItemList schema or DOM
-        listings = self._extract_jsonld(soup, crawl_id)
-        if not listings:
-            listings = self._extract_dom(soup, crawl_id)
-
-        # Filter listings that match the search query (e.g. "iphone", "iphone 17")
-        if query:
-            q_terms = query.lower().split()
-            filtered = [
-                l for l in listings
-                if all(term in l.product_name.lower() for term in q_terms)
-            ]
-            logger.info(
-                "%s: %d total listings found, %d match '%s'",
-                self.name, len(listings), len(filtered), query
+        products = data.get("response", {}).get("products", [])
+        results = []
+        for item in products:
+            name = (item.get("title") or "").strip()
+            selling = _to_float(
+                item.get("offerPrice")
+                or item.get("vsp")
+                or item.get("price")
+                or item.get("cityId_1_offerPrice_unx_d")
+                or item.get("cityId_1_sellingPrice_unx_d")
+                or item.get("cityId_1_price_unx_d")
             )
-            return filtered
+            if not name or selling is None:
+                continue
 
-        return listings
+            mrp = _to_float(item.get("mrp"))
+            discount = round(mrp - selling, 2) if mrp and mrp > selling else None
+
+            raw_url = item.get("productUrl") or ""
+            product_url = raw_url if raw_url.startswith("http") else f"{self.base_url}{raw_url}"
+
+            imgs = item.get("imageUrl")
+            image_url = imgs[0] if isinstance(imgs, list) and imgs else (imgs if isinstance(imgs, str) else None)
+
+            offer_parts = []
+            if item.get("cityId_1_offerAvailable_unx_ts"):
+                offer_parts.append(str(item["cityId_1_offerAvailable_unx_ts"]))
+            exchange = item.get("cityId_1_exchange_unx_tsm")
+            if isinstance(exchange, list) and exchange:
+                offer_parts.append(f"Exchange: {', '.join(exchange)}")
+            offer_text = " | ".join(offer_parts) if offer_parts else None
+
+            brand, model, storage, colour = _parse_product_name(name)
+            raw_brand = item.get("brand")
+            if isinstance(raw_brand, list):
+                raw_brand = raw_brand[0] if raw_brand else None
+            results.append(ScrapedListing(
+                product_name=name,
+                product_url=product_url,
+                source=self.name,
+                selling_price=selling,
+                brand=brand or (str(raw_brand).strip() if raw_brand else None),
+                model=model,
+                storage=storage,
+                colour=colour,
+                sku=item.get("sku") or item.get("uid"),
+                image_url=image_url,
+                mrp=mrp,
+                discount=discount,
+                offer_text=offer_text,
+                rating=_to_float(item.get("aggregateAverageRating")),
+                review_count=_to_int(item.get("aggregateReviewCount") or item.get("aggregateRatingCount")),
+                crawl_id=crawl_id,
+            ))
+
+        logger.info("%s: Unbxd API extracted %d listings", self.name, len(results))
+        return results
+
+    def _search_via_html(self, query: str, crawl_id: str) -> list[ScrapedListing]:
+        """Fallback to Vijay Sales /search-listing?q= HTML page."""
+        search_url = f"{self.base_url}/search-listing?q={quote_plus(query)}"
+        try:
+            resp = self._get(search_url)
+            if resp.status_code != 200:
+                return []
+            soup = BeautifulSoup(resp.text, "html.parser")
+            return self._extract_dom(soup, crawl_id) or self._extract_jsonld(soup, crawl_id)
+        except Exception as exc:
+            logger.warning("%s: HTML search fallback failed: %s", self.name, exc)
+            return []
 
     def _extract_jsonld(self, soup: BeautifulSoup, crawl_id: str) -> list[ScrapedListing]:
         """Extract product listings from JSON-LD schema blocks."""

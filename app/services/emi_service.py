@@ -9,7 +9,62 @@ Implements the standard reducing-balance EMI formula:
 If r == 0 (no-cost EMI), EMI = P / n.
 """
 
+import re
 from typing import Optional
+
+
+_BANK_RE = re.compile(
+    r"\b(HDFC|ICICI|SBI|Axis|Kotak|IDFC|Yes\s*Bank|HSBC|OneCard|Amex|BOB|Bank\s*of\s*Baroda)\b",
+    re.IGNORECASE,
+)
+_FLAT_DISCOUNT_RE = re.compile(
+    r"(?:₹|Rs\.?\s*)([\d,]+(?:\.\d+)?)\s*(?:off|discount|cashback|instant)?",
+    re.IGNORECASE,
+)
+_PCT_DISCOUNT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%\s*(?:off|discount|cashback)", re.IGNORECASE)
+
+
+def parse_offer_details(
+    offer_text: Optional[str], selling_price: float
+) -> tuple[Optional[float], Optional[str], Optional[str]]:
+    """Extract (offer_discount, offer_type, bank) from publicly visible offer text."""
+    if not offer_text or selling_price <= 0:
+        return None, None, None
+
+    bank_m = _BANK_RE.search(offer_text)
+    bank = bank_m.group(1).strip() if bank_m else None
+
+    lower = offer_text.lower()
+    if bank or "card" in lower or "bank" in lower or "cashback" in lower:
+        offer_type = "bank"
+    elif "no cost emi" in lower or "no-cost emi" in lower or "emi" in lower:
+        offer_type = "emi"
+    elif "exchange" in lower:
+        offer_type = "exchange"
+    else:
+        offer_type = "discount"
+
+    offer_discount = None
+    # Check "Best Price ₹X" style text first
+    best_m = re.search(r"best\s*price\s*[:\-]?\s*(?:₹|Rs\.?\s*)([\d,]+(?:\.\d+)?)", offer_text, re.IGNORECASE)
+    if best_m:
+        best_val = float(best_m.group(1).replace(",", ""))
+        if 0 < best_val < selling_price:
+            offer_discount = round(selling_price - best_val, 2)
+    else:
+        flat_m = _FLAT_DISCOUNT_RE.search(offer_text)
+        if flat_m:
+            val = float(flat_m.group(1).replace(",", ""))
+            if 0 < val < selling_price:
+                offer_discount = round(val, 2)
+        else:
+            pct_m = _PCT_DISCOUNT_RE.search(offer_text)
+            if pct_m:
+                pct = float(pct_m.group(1))
+                if 0 < pct < 50:
+                    offer_discount = round(selling_price * (pct / 100.0), 2)
+
+    return offer_discount, offer_type, bank
 
 
 class EmiService:

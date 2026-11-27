@@ -1,64 +1,33 @@
 # Ecommerce Price Intelligence
 
-A Flask-based smartphone price comparison application that collects
-publicly available product and offer information from multiple
-retailers, normalizes comparable product variants, estimates EMI, and
-highlights the best available deal.
+A Flask-based smartphone price comparison platform that collects publicly available product, pricing, and offer information from multiple Indian electronics retailers, normalizes comparable variants, calculates indicative EMI, and ranks the best available deals.
 
-> **Project status:** Initial planning / development setup. The
-> structure and features below describe the intended implementation;
-> they are not a claim that all features are already working.
+> **Active retailers:** **Vijay Sales**, **Reliance Digital**, and **Poorvika**.
+> (`CromaScraper` is retained in `app/scrapers/croma.py` but disabled by default in `SearchService` due to `403` WAF blocks.)
 
-## Goals
+## Features
 
-A user should be able to search for a smartphone by model and optionally
-filter by storage, colour, and budget. The application will collect
-matching listings from at least three retail sources:
+- **Multi-Retailer Search & Filtering:** Search by model/brand with optional filters for `storage`, `colour`, `min_budget`, `max_budget`, and `source` (retailer).
+- **Variant Normalization & Accessory Filtering:** Groups equivalent listings across retailers into deterministic `variant_id` slugs and filters out cases, covers, chargers, and sub-₹3,000 accessories.
+- **Offer & Effective Price Calculation:** Enriches top listings with client-side bank/card discounts via Playwright + Chromium, computes `effective_price` separately from `selling_price`, and explains why `best_deal` ranked first.
+- **Indicative EMI Calculator:** Computes reducing-balance and 0% no-cost EMI estimates from `tenure`, `down_payment`, and `annual_rate`.
+- **Persistence & Price History:** Stores `Product`, `Retailer`, `ProductListing`, and `PriceHistory` snapshots in PostgreSQL, with DB cache fallback if live scrapers return no results.
+- **Request Logging:** Logs all incoming HTTP requests, status codes, and response times to `logs/api.log`.
 
--   Croma
--   Vijay Sales
--   Reliance Digital
+## Technology Stack
 
-It will then normalize product details and prices, capture publicly
-visible offers and availability, calculate indicative EMI values, and
-display a comparison with source links and scrape timestamps.
+| Area | Technology |
+| :--- | :--- |
+| Language | Python 3.12+ |
+| Web / API | Flask, Jinja2, Bootstrap 5 |
+| Scraping & Enrichment | `requests`, `beautifulsoup4`, `playwright` (Chromium) |
+| Database / ORM | PostgreSQL (`psycopg2-binary`), Flask-SQLAlchemy / SQLAlchemy |
+| Testing | `pytest` |
+| Containerization | Docker & Docker Compose |
 
-## Planned technology
+## Project Structure
 
-  -----------------------------------------------------------------------
-  Area                                Technology
-  ----------------------------------- -----------------------------------
-  Language                            Python
-
-  Web application / backend           Flask
-
-  Frontend                            Flask templates, HTML, CSS,
-                                      JavaScript
-
-  Scraping                            Requests, BeautifulSoup
-
-  Database                            PostgreSQL preferred; SQLite can be
-                                      used for local development
-
-  ORM                                 Flask-SQLAlchemy / SQLAlchemy
-
-  Configuration                       python-dotenv
-
-  Testing                             Pytest
-
-  Optional browser automation         Playwright, only where permitted
-                                      and genuinely required
-
-  Deployment                          Docker (planned)
-  -----------------------------------------------------------------------
-
-No paid API is required for the planned core implementation. Retailer
-pages can change or restrict automated access, so scraper availability
-cannot be guaranteed permanently.
-
-## Planned project structure
-
-``` text
+```text
 ecommerce-price-intelligence/
 ├── app/
 │   ├── __init__.py
@@ -67,226 +36,173 @@ ecommerce-price-intelligence/
 │   ├── models/
 │   │   ├── __init__.py
 │   │   ├── product.py
-│   │   ├── offer.py
+│   │   ├── retailer.py
+│   │   ├── product_listing.py
 │   │   └── price_history.py
 │   ├── routes/
-│   │   ├── __init__.py
 │   │   ├── pages.py
 │   │   ├── search.py
 │   │   └── health.py
 │   ├── scrapers/
 │   │   ├── __init__.py
 │   │   ├── base.py
-│   │   ├── croma.py
 │   │   ├── vijay_sales.py
-│   │   └── reliance_digital.py
+│   │   ├── reliance_digital.py
+│   │   ├── poorvika.py
+│   │   └── croma.py
 │   ├── services/
 │   │   ├── search_service.py
 │   │   ├── matching_service.py
-│   │   ├── pricing_service.py
-│   │   └── emi_service.py
-│   ├── templates/
-│   │   ├── index.html
-│   │   └── results.html
-│   └── static/
-│       ├── css/style.css
-│       └── js/app.js
+│   │   ├── emi_service.py
+│   │   └── offer_enrichment.py
+│   └── templates/
+│       ├── index.html
+│       └── results.html
 ├── tests/
-│   ├── test_scrapers.py
-│   ├── test_matching.py
-│   └── test_emi.py
+│   ├── test_api.py
+│   ├── test_emi.py
+│   ├── test_filters_and_offers.py
+│   └── test_matching.py
 ├── .env.example
 ├── .gitignore
+├── Dockerfile
+├── docker-compose.yml
 ├── requirements.txt
 ├── run.py
-├── README.md
+├── seed_data.py
+├── sample_output.json
 ├── PROJECT_PLAN.md
-└── Dockerfile
+└── README.md
 ```
 
-See [PROJECT_PLAN.md](PROJECT_PLAN.md) for the responsibility of each
-module, architecture flow, data plan, development phases, and
-implementation decisions.
+## Local Setup & Run Commands
 
-## Local setup
+### 1. Create and activate a virtual environment
 
-### 1. Clone the repository
+Windows (PowerShell):
 
-``` bash
-git clone <your-repository-url>
-cd ecommerce-price-intelligence
-```
-
-### 2. Create and activate a virtual environment
-
-Windows:
-
-``` bash
+```powershell
 python -m venv venv
-venv\Scripts\activate
+.\venv\Scripts\Activate.ps1
 ```
 
 macOS / Linux:
 
-``` bash
+```bash
 python3 -m venv venv
 source venv/bin/activate
 ```
 
-### 3. Install dependencies
+### 2. Install dependencies and Playwright Chromium
 
-``` bash
+```bash
 pip install -r requirements.txt
+playwright install chromium
 ```
 
-The initial dependency set is expected to include:
+### 3. Configure environment variables
 
-``` text
-Flask
-Flask-SQLAlchemy
-SQLAlchemy
-requests
-beautifulsoup4
-python-dotenv
-pytest
-```
+Copy `.env.example` to `.env` and set your PostgreSQL connection string:
 
-Add `psycopg2-binary` when using PostgreSQL. Add `playwright` only if a
-permitted source requires browser rendering.
-
-### 4. Configure environment variables
-
-Create a local `.env` file based on `.env.example`. Do not commit
-`.env`.
-
-Example values (adjust to your local database):
-
-``` env
-FLASK_ENV=development
+```env
 SECRET_KEY=replace-with-a-local-secret
-DATABASE_URL=sqlite:///price_intelligence.db
-REQUEST_TIMEOUT=15
+DEBUG=True
+DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:5432/ecommerce_price_intelligence
 ```
 
-For PostgreSQL, use a suitable SQLAlchemy connection URL instead of the
-SQLite URL.
+### 4. Seed initial retailers/products (optional)
 
-### 5. Run the application
+```bash
+python seed_data.py
+```
 
-Once the Flask entry point and routes have been implemented:
+### 5. Run the Flask application
 
-``` bash
+```bash
 python run.py
 ```
 
-The local development URL and exact run instructions will be confirmed
-in this section when the application entry point is ready.
+Open `http://127.0.0.1:5000/` in your browser. All HTTP requests are logged to `logs/api.log`.
 
-## Planned application flow
+---
 
-1.  User submits a phone model and optional filters.
-2.  Flask validates the search request.
-3.  The search service invokes the retailer scraper adapters.
-4.  Each adapter returns product data in a common format.
-5.  The matching service groups listings that represent the same model
-    and variant.
-6.  The pricing and offer services normalize prices and calculate
-    eligible indicative values.
-7.  Results and crawl metadata are persisted.
-8.  The UI displays comparable listings, offers, estimated EMI,
-    availability, source links, and scrape time.
+## Run with Docker
 
-## Planned data captured
+The repository includes `Dockerfile` and `docker-compose.yml` (PostgreSQL 16 + Flask web app with Playwright Chromium).
 
-Product/listing information may include:
+### Build and start all services
 
--   Product name, brand, model, storage, colour, SKU / model number, and
-    variant identifier
--   Product URL, image URL, retailer/source, seller, and currency
--   MRP, selling price, discount, and availability
--   Rating and review count when exposed by the source
--   Offer text, offer type, bank, offer discount, and
-    validity/eligibility details when available
--   EMI availability, tenure, interest rate, and calculated monthly EMI
--   Scrape timestamp and crawl/run identifier
+```bash
+docker compose up --build
+```
 
-Only information actually exposed by a source will be populated. Missing
-values should remain unknown rather than being guessed.
+### Run in detached mode
 
-## Example API routes (planned)
+```bash
+docker compose up -d --build
+```
 
-  ---------------------------------------------------------------------------
-  Method                  Route                       Purpose
-  ----------------------- --------------------------- -----------------------
-  GET                     `/`                         Render the search page
+### View application logs
 
-  POST                    `/api/search`               Search and compare
-                                                      listings
+```bash
+docker compose logs -f web
+```
 
-  GET                     `/api/product/<id>`         Return normalized
-                                                      product / variant
-                                                      details
+### Stop services
 
-  GET                     `/api/offers/<id>`          Return offer and EMI
-                                                      information
+```bash
+docker compose down
+```
 
-  GET                     `/api/price-history/<id>`   Return stored price
-                                                      history
+To also remove the PostgreSQL data volume:
 
-  GET                     `/health`                   Health check
-  ---------------------------------------------------------------------------
+```bash
+docker compose down -v
+```
 
-These routes are the intended interface and may be adjusted during
-implementation.
+Once running, access the app at `http://127.0.0.1:5000/`.
 
-## Reliability and responsible scraping
+---
 
--   Check each website's robots.txt, terms, and access restrictions
-    before scraping.
--   Do not bypass CAPTCHA, authentication, paywalls, or other access
-    controls.
--   Use sensible request timeouts, conservative rate limits, and bounded
-    concurrency.
--   Handle HTTP errors, connection failures, malformed responses, and
-    missing fields.
--   A failure at one retailer should not prevent results from other
-    retailers being returned.
--   Store the source URL and scrape timestamp with collected data.
--   Keep retailer-specific parsing inside its adapter so changes are
-    isolated.
--   Do not assume bank discounts can always be combined; preserve
-    eligibility conditions and label calculations as estimates.
+## API Endpoints
+
+| Method | Route | Purpose |
+| :--- | :--- | :--- |
+| `GET` | `/` | Render the smartphone search UI |
+| `GET` | `/results` | Render filtered comparison & EMI results page |
+| `GET` / `POST` | `/api/search` | Search, filter, enrich offers, calculate EMI, and rank deals |
+| `GET` | `/api/product/<id>` | Return normalized product/variant details and listings |
+| `GET` | `/api/offers/<id>` | Return retailer offers and indicative EMI options |
+| `GET` | `/api/price-history/<id>` | Return historical price observations |
+| `GET` | `/health` | Service health check |
+
+### `/api/search` Parameters
+
+- `query` *(required)*: Smartphone model or brand (e.g., `iPhone 17`, `Samsung S26`)
+- `tenure` *(optional, default `12`)*: EMI tenure in months
+- `down_payment` *(optional, default `0.0`)*: Down payment in INR
+- `annual_rate` *(optional, default `14.0`)*: Annual interest rate `%` (`0` for No-Cost EMI)
+- `storage` *(optional)*: e.g., `128 GB`, `256 GB`, `512 GB`, `1 TB`
+- `colour` *(optional)*: e.g., `Black`, `Blue`
+- `min_budget` / `max_budget` *(optional)*: Price range in INR
+- `source` *(optional)*: `vijay-sales`, `reliance-digital`, `poorvika`, or `all`
+
+A sample response is saved in `sample_output.json`.
+
+---
 
 ## Testing
 
-Run the automated tests with:
+Run the full test suite from the project root:
 
-``` bash
-pytest
+```bash
+pytest -v
 ```
 
-Tests will cover scraper parsing using saved/sample responses where
-possible, product matching, price normalization, EMI calculations, and
-partial source failures. Live scraper checks should be limited and
-respectful of retailer rules.
+---
 
-## Current development checklist
+## Notes & Limitations
 
--   [ ] Create the Flask application factory and configuration
--   [ ] Add database connection and initial models
--   [ ] Define a common scraper result format and base adapter
--   [ ] Implement and test the first retailer adapter
--   [ ] Implement the other two retailer adapters
--   [ ] Add product matching and price normalization
--   [ ] Add offer extraction and EMI calculations
--   [ ] Add search and comparison routes
--   [ ] Build the search and results pages
--   [ ] Persist crawl metadata and price history
--   [ ] Add tests, logging, documentation, and Docker setup
-
-## Important note
-
-Retailer websites can change their HTML, APIs, availability, and
-anti-bot policies at any time. The application should report partial
-results and source failures honestly rather than displaying fabricated
-prices or offers.
+- Retailer HTML, APIs, stock, and anti-bot protections can change at any time; failures in one retailer do not crash the search.
+- To balance response speed with offer accuracy, Playwright enriches up to `max_per_retailer=5` filtered listings per retailer for client-side bank/card discounts.
+- All EMI and effective-price calculations are indicative estimates; verify final card eligibility on the retailer's store page.

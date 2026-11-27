@@ -33,3 +33,7 @@ $RECYCLE.BIN/
 # Temporary test scripts
 test_*.py
 !test_db.py
+
+# Logs
+logs/
+*.log

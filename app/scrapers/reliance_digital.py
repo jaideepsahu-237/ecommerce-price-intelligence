@@ -7,6 +7,7 @@ ratings, availability).
 
 import json
 import logging
+import re
 from typing import Optional
 from urllib.parse import quote_plus
 
@@ -35,32 +36,42 @@ class RelianceDigitalScraper(BaseScraper):
         self.category_url = category_url or Config.RELIANCE_DIGITAL_CATEGORY_URL
 
     def search(self, query: str, **filters) -> list[ScrapedListing]:
-        """Search Reliance Digital for products matching query."""
+        """Search Reliance Digital via SSR /products?q= endpoint."""
         crawl_id = self._make_crawl_id()
         logger.info("%s: searching for '%s'", self.name, query)
 
-        # Primary attempt: fetch from category URL (configured via .env)
+        target_url = (
+            f"{self.base_url}/products?q={quote_plus(query)}"
+            if query
+            else self.category_url
+        )
+
+        html_text = ""
         try:
-            resp = self._get(self.category_url)
+            resp = self._get(target_url)
+            html_text = resp.text
         except Exception as exc:
-            logger.warning("%s: category request failed: %s", self.name, exc)
+            logger.warning("%s: search request failed (%s); trying Playwright fallback", self.name, exc)
+            html_text = self._fetch_with_playwright(target_url)
+
+        if not html_text:
             return []
 
-        soup = BeautifulSoup(resp.text, "html.parser")
+        soup = BeautifulSoup(html_text, "html.parser")
 
-        # 1. Try structured data JSON-LD
-        listings = self._extract_jsonld(soup, crawl_id)
+        # 1. Try DOM elements (SSR /products?q= renders .product-card directly)
+        listings = self._extract_dom(soup, crawl_id)
 
-        # 2. Fall back to DOM elements
+        # 2. Fall back to JSON-LD if DOM cards were not found
         if not listings:
-            listings = self._extract_dom(soup, crawl_id)
+            listings = self._extract_jsonld(soup, crawl_id)
 
         # Filter by search terms if a query is given
-        if query:
-            q_terms = query.lower().split()
+        if query and listings:
+            q_terms = re.sub(r"[^\w\s]", "", query.lower()).split()
             filtered = [
                 l for l in listings
-                if all(term in l.product_name.lower() for term in q_terms)
+                if all(term in re.sub(r"[^\w\s]", "", l.product_name.lower()) for term in q_terms)
             ]
             logger.info(
                 "%s: %d total listings found, %d match '%s'",
@@ -69,6 +80,37 @@ class RelianceDigitalScraper(BaseScraper):
             return filtered
 
         return listings
+
+    def _fetch_with_playwright(self, url: str) -> str:
+        """Fallback to headless Chromium when requests receives 403/WAF block."""
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            return ""
+
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                context = browser.new_context(
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/122.0.0.0 Safari/537.36"
+                    )
+                )
+                page = context.new_page()
+                try:
+                    page.goto(url, wait_until="domcontentloaded", timeout=15000)
+                    try:
+                        page.wait_for_selector(".product-card", timeout=5000)
+                    except Exception:
+                        pass
+                    return page.content()
+                finally:
+                    browser.close()
+        except Exception as exc:
+            logger.warning("%s: Playwright fallback failed: %s", self.name, exc)
+            return ""
 
     def _extract_jsonld(self, soup: BeautifulSoup, crawl_id: str) -> list[ScrapedListing]:
         """Extract product listings from JSON-LD schema blocks."""
@@ -168,6 +210,7 @@ class RelianceDigitalScraper(BaseScraper):
         results = []
 
         card_selectors = [
+            ".product-card",
             "li.grid",
             "div.sp",
             "div.plp-container li",
@@ -195,7 +238,8 @@ class RelianceDigitalScraper(BaseScraper):
     def _parse_dom_card(self, card, crawl_id: str) -> Optional[ScrapedListing]:
         try:
             name_el = (
-                card.select_one(".pbc__title")
+                card.select_one(".product-card-title")
+                or card.select_one(".pbc__title")
                 or card.select_one(".sp__name")
                 or card.select_one("h3")
                 or card.select_one("h2")
@@ -205,12 +249,13 @@ class RelianceDigitalScraper(BaseScraper):
             if not name:
                 return None
 
-            link_el = card.select_one("a[href]")
+            link_el = card.select_one("a.details-container[href]") or card.select_one("a[href]")
             href = link_el["href"] if link_el else ""
             product_url = href if href.startswith("http") else self.base_url + href
 
             price_el = (
-                card.select_one(".gimCrs")
+                card.select_one(".price-container .price")
+                or card.select_one(".gimCrs")
                 or card.select_one(".text__sellingPrice")
                 or card.select_one(".sp__price")
                 or card.select_one(".amount")
@@ -219,12 +264,20 @@ class RelianceDigitalScraper(BaseScraper):
             if selling is None:
                 return None
 
-            mrp_el = card.select_one(".text__mrp") or card.select_one(".sp__mrp")
+            mrp_el = (
+                card.select_one(".mrp-container .mrp-amount")
+                or card.select_one(".text__mrp")
+                or card.select_one(".sp__mrp")
+            )
             mrp = _extract_price(mrp_el.get_text() if mrp_el else "")
             discount = round(mrp - selling, 2) if mrp and mrp > selling else None
 
-            img_el = card.select_one("img")
+            img_el = card.select_one(".product-card-image img.fy__img") or card.select_one("img")
             image_url = img_el.get("src") or img_el.get("data-src") if img_el else None
+
+            offer_el = card.select_one(".plp-best-price-root")
+            raw_offer = offer_el.get_text(" ", strip=True) if offer_el else ""
+            offer_text = raw_offer if re.search(r"\d", raw_offer) else None
 
             brand, model, storage, colour = _parse_product_name(name)
 
@@ -240,6 +293,7 @@ class RelianceDigitalScraper(BaseScraper):
                 image_url=image_url,
                 mrp=mrp,
                 discount=discount,
+                offer_text=offer_text,
                 crawl_id=crawl_id,
             )
         except Exception as exc:

@@ -444,3 +444,35 @@ The first version is ready for review when:
 -   Playwright fallback for permitted pages that genuinely require
     browser rendering.
 -   Domain-aware asynchronous scraping with strict concurrency limits.
+
+---
+
+## 14. Current Implementation To-Do List (Core Scope)
+
+Strictly scoped to the core requirements in `Ecommerce_Price_Intelligence_Technical_Test.docx`.
+
+### Completed
+- [x] **3 Working Retail Scrapers**: `VijaySalesScraper` (Unbxd JSON API + HTML fallback), `RelianceDigitalScraper` (SSR `/products?q=`), and `PoorvikaScraper` (SSR `/s?q=`) with timeouts, retries, and graceful per-source error handling
+- [x] **Product Matching & Normalization**: `MatchingService` (`variant_id` grouping, brand/storage/colour normalization, brand typo autocorrect, accessory filtering)
+- [x] **EMI Calculation**: `EmiService` reducing-balance & 0% no-cost EMI calculations
+- [x] **Database & History**: `Product`, `Retailer`, `ProductListing`, `PriceHistory` models + `seed_data.py`
+- [x] **Core Endpoints & Logging**: `GET /`, `GET /results`, `POST`/`GET /api/search`, `GET /health`, and `logs/api.log` request logging
+- [x] **Baseline Unit Tests**: 13 passing tests in `tests/`
+
+### Remaining Core Tasks (Step-by-Step)
+- [x] **Step 1 — Search Filters (UI + API)**
+  - Add optional `storage`, `colour`, `budget` (min/max), and `source` (retailer) filters to `GET /results`, `POST`/`GET /api/search`, `SearchService.execute_search()`, and `index.html` / `results.html`.
+- [x] **Step 2 — Missing Documented API Endpoints**
+  - `GET /api/product/<id>`: Return normalized product/variant details.
+  - `GET /api/offers/<id>`: Return available offers and EMI options for a product.
+  - `GET /api/price-history/<id>`: Return historical prices from `PriceHistory`.
+- [x] **Step 3 — Offer / Effective Price & Ranking Explanation**
+  - Extract visible bank/offer discounts where exposed by retailers and compute `effective_price` separately from `selling_price`.
+  - Display a short explanation of why `best_deal` is ranked first, plus source links and scrape timestamps in `results.html`.
+- [x] **Step 4 — Tests for New Features**
+  - Add unit/integration tests for the new search filters, `/api/product/<id>`, `/api/offers/<id>`, `/api/price-history/<id>`, and effective price logic.
+- [x] **Step 5 — Submission Deliverables**
+  - Add `Dockerfile` and `docker-compose.yml`.
+  - Update `README.md` (current 3 scrapers, setup/run commands, architecture, assumptions & limitations).
+  - Save sample API/UI output (JSON/CSV).
+
